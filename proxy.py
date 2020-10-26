@@ -32,6 +32,7 @@ import socket
 import types
 from interceptors import ResponseInterceptor, CommandInterceptor
 
+
 class Proxy:
     def __init__(self, instance_config, plugins):
         self.plugins = plugins
@@ -39,7 +40,6 @@ class Proxy:
         self.instance_config = instance_config
         self.connections = []
         self.selector = selectors.DefaultSelector()
-
 
     def __create_pg_connection(self, address, context):
         redirect_config = self.instance_config.redirect
@@ -51,28 +51,25 @@ class Proxy:
         events = selectors.EVENT_READ | selectors.EVENT_WRITE
 
         pg_conn = connection.Connection(pg_sock,
-                                        name    = redirect_config.name + '_' + str(self.num_clients),
-                                        address = address,
-                                        events  = events,
-                                        context = context)
+                                        name=redirect_config.name + '_' + str(self.num_clients),
+                                        address=address,
+                                        events=events,
+                                        context=context)
 
         logging.info("initiated client connection to %s:%s called %s",
                      redirect_config.host, redirect_config.port, redirect_config.name)
         return pg_conn
 
-
     def __register_conn(self, conn):
         self.selector.register(conn.sock, conn.events, data=conn)
-
 
     def __unregister_conn(self, conn):
         self.selector.unregister(conn.sock)
 
-
     def accept_wrapper(self, sock):
         clientsocket, address = sock.accept()  # Should be ready to 
         clientsocket.setblocking(False)
-        self.num_clients+=1
+        self.num_clients += 1
         sock_name = '{}_{}'.format(self.instance_config.listen.name, self.num_clients)
         logging.info("connection from %s, connection initiated %s", address, sock_name)
 
@@ -84,24 +81,23 @@ class Proxy:
         }
 
         conn = connection.Connection(clientsocket,
-                                     name    = sock_name,
-                                     address = address,
-                                     events  = events,
-                                     context = context)
+                                     name=sock_name,
+                                     address=address,
+                                     events=events,
+                                     context=context)
 
         pg_conn = self.__create_pg_connection(address, context)
 
         if self.instance_config.intercept is not None and self.instance_config.intercept.responses is not None:
             pg_conn.interceptor = ResponseInterceptor(self.instance_config.intercept.responses, self.plugins, context)
             pg_conn.redirect_conn = conn
-        
+
         if self.instance_config.intercept is not None and self.instance_config.intercept.commands is not None:
             conn.interceptor = CommandInterceptor(self.instance_config.intercept.commands, self.plugins, context)
             conn.redirect_conn = pg_conn
 
         self.__register_conn(conn)
         self.__register_conn(pg_conn)
-
 
     def service_connection(self, key, mask):
         sock = key.fileobj
@@ -121,9 +117,7 @@ class Proxy:
                 sent = sock.send(conn.out_bytes)  # Should be ready to write
                 conn.sent(sent)
 
-
-
-    def listen(self, max_connections = 8):
+    def listen(self, max_connections=1):
         '''Listen server socket. On connect launch a new thread with the client connection as an argument
         '''
         lconf = self.instance_config.listen
@@ -131,6 +125,7 @@ class Proxy:
         try:
             logging.info("listening to %s:%s", ip, port)
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind((ip, port))
             self.sock.listen(max_connections)
             self.sock.setblocking(False)
@@ -147,19 +142,20 @@ class Proxy:
         except OSError as ex:
             logging.critical("Can't establish listener", exc_info=ex)
         finally:
+            self.sock.shutdown(socket.SHUT_RDWR)
             self.sock.close()
             self.sock = None
             logging.info("closed socket")
 
 
-if(__name__=='__main__'):
+if (__name__ == '__main__'):
     import importlib, yaml, os
 
     path = os.path.dirname(os.path.realpath(__file__))
     config = None
     try:
         with open(path + '/' + 'config.yml', 'r') as fp:
-            config = cfg.Config(yaml.load(fp))
+            config = cfg.Config(yaml.load(fp, Loader=yaml.FullLoader))
     except Exception:
         logging.critical("Could not read config. Aborting.")
         exit(1)
@@ -172,7 +168,7 @@ if(__name__=='__main__'):
 
     qlog = logging.getLogger('intercept')
     qformat = logging.Formatter('%(asctime)s : %(message)s')
-    qhandler = logging.FileHandler(config.settings.intercept_log, mode = 'w')
+    qhandler = logging.FileHandler(config.settings.intercept_log, mode='w')
     qhandler.setFormatter(qformat)
     qlog.addHandler(qhandler)
     qlog.setLevel(logging.DEBUG)
